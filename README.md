@@ -1,4 +1,4 @@
-L2lidar Class  – Framework
+L2lidar Class  â€“ Framework
 ===============================================================
 
 **Author:** Mark Stegall  
@@ -31,7 +31,7 @@ The project was developed to replace reliance on undocumented vendor libraries a
 Motivation
 ----------
 
-Unitree’s official SDK distributes:
+Unitreeâ€™s official SDK distributes:
 
 * Header files
 
