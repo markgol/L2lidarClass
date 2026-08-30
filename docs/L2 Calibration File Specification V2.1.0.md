@@ -2,8 +2,8 @@
 
 > **Status:** Released
 > 
-> **Document Version:** 2.0.0  
-> **Calibration File Version:** 2.0.0
+> **Document Version:** 2.1.0 
+> **Calibration File Version:** 2.1.0
 > 
 > This document is the normative specification for the Unitree L2 Range
 > Calibration File used by `L2lidar class software`.
@@ -12,11 +12,11 @@
 
 # Revision History
 
-| Version | Date       | Description                                                       |
-| ------- | ---------- | ----------------------------------------------------------------- |
-| 2.0.0   | 2026-08-21 | Initial release of the Unitree L2 Calibration File specification. |
-
----
+| Version | Date       | Description                                                                                                                                                                                                                         |
+| ------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2.0.0   | 2026-08-21 | Initial release of the Unitree L2 Calibration File specification.                                                                                                                                                                   |
+| 2.0.1   | 2026-08-25 | Added AlphaAngleStepSize override to metadata, this can be used when there is not AlphaAngleLUT and the stepsize is uniform.  Updated the Alpha angle LUT definition.  It contains the angle increment for the next elevation step. |
+| 2.1.0   | 2026-08-27 | Changed specification to allow the range correction to be optional.                                                                                                                                                                 |
 
 # 1. Introduction
 
@@ -28,7 +28,7 @@ range to corrected range and maps measured angles to corrected angles of the fas
 
 The calibration file contents:
 
-- Meta data specifying the conditions to be used with the calirbation corrections.
+- Meta data specifying the conditions to be used with the calibration corrections.  The Meta data includes all the calibration overrides.  The calibration overrides are always present even if there is no Range model or Elevation LUT.
 
 - The Range model is converted into a runtime lookup table (LUT) used for efficient range correction.
 
@@ -117,7 +117,7 @@ Metadata consists of one key/value pair per line.
 Example:
 
 ```text
-# Version,2.0.0
+# Version,2.1.0
 ```
 
 ## Required Metadata
@@ -131,6 +131,7 @@ Example:
 | RangeBias           | Integer range bias (mm)                  |
 | RangeScale          | conversion and scaling from mm to meters |
 | AlphaAngleBias      | Offset for zero elevation (degrees)      |
+| AlphaAngleStepSize  | Step size for elevation (degrees)        |
 | ThetaAngleBias      | Offset for zero azimuth (degrees)        |
 | BetaAngle           | degrees                                  |
 | XiAngle             | degrees                                  |
@@ -153,19 +154,31 @@ Example:
 
 ---
 
-# 6. Range Correction Method
+# 6. CalibrationMethod metadata
 
-Version 2.0.0 defines:
+Version 2.1.0 defines:
+
+If RANGE CORRECTION model data included in the file:
 
 ```text
 RangeCorrectionMethod,CubicSpline
+```
+
+If no RANGE CORRRECTION model data included in the file:
+
+```
+RangeCorrectionMethod,None
 ```
 
 Applications shall reject unsupported calibration methods.
 
 ---
 
-# 7. RANGE MODEL Section
+# 7. RANGE MODEL Section (optional)
+
+The RANGE MODEL section is an optional section.
+
+The CALIBRATION POINTS section is only included if there is a RANGE MODEL section inclued in the file.
 
 Section header:
 
@@ -214,7 +227,9 @@ where all values are expressed in millimeters.
 
 ---
 
-# 7. FAST SCAN ANGLE LUT Section
+# 7. FAST SCAN ANGLE LUT Section (optional)
+
+The FAST SCAN ANGLE LUT section is optional
 
 Section header:
 
@@ -228,15 +243,17 @@ Column definition:
 Each row defines one spline segment using floating point notation for each field. For example:
 
 ```
-0, 0.000
-1, 0.600
+0, 0.6020
+1, 0.6020
 ...
-299, 179.400
+299, 0.6020
 ```
 
 where
-    Actual fast scan (alpha) angle[i] = Alpha Angle Bias + relative angle[i]
+    relative angle[i] is the angle increment to the next elevation step.
     where i is the fast scan angle index
+
+    Index 299 is not used since there is not next elevation step.
 
 ## Requirements
 
@@ -248,13 +265,11 @@ where
 
 - All angles finite
 
-- AlphaAngle[0] == 0.0 within numerical tolerance
-
-- Angles strictly increasing
-
 ---
 
-# 8. CALIBRATION POINTS Section
+# 8. CALIBRATION POINTS Section (optional)
+
+The CALIBRATION POINTS section is only included if there is a RANGE MODEL section inclued in the file.
 
 Section header:
 
@@ -356,6 +371,7 @@ while maintaining backward compatibility whenever practical.
 # RangeBias,-530
 # RangeScale, 0.001
 # AlphaAngleBias, 1.75
+# AlphaAngleStepSize, 0.602
 # ThetaAngleBias, 120.0
 # BetaAngle, 0.25
 # XiAngle, 0.25
@@ -442,7 +458,7 @@ Derived runtime data, including lookup tables, are intentionally excluded.
 
 ## A.6 Design Goals
 
-Version 2.0.0 was designed to satisfy the following objectives:
+Version 2.0.1 was designed to satisfy the following objectives:
 
 - Human-readable and version controlled
 - Simple to parse

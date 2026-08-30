@@ -2,7 +2,7 @@
 //
 //  L2Diagnostic
 //  Author: Mark Stegall
-//  Module: L2RangeCorrection.cpp
+//  Module: L2calibration.cpp
 //
 // Purpose:    Unitree L2 non-linear range correction.
 //
@@ -31,6 +31,11 @@
 //  V2.0.1  2026-08-24 Implemented application of the alpha angle LUT
 //                     Added Alpha Angle step size override
 //                     Removed unused code
+//  V2.1.0  2026-08-27  Changed calibration file so that range correction
+//                          optional.  This allows just metadata to be saved
+//                          which includes the overrride biases.
+//                      Changed files/names to reflect generalization
+//                          of the calibration file rather than RangeCorrection file
 //
 //--------------------------------------------------------
 
@@ -49,7 +54,7 @@
 // You should have received a copy of the GNU General Public License along with L2diagnsotic.
 // If not, see < https://www.gnu.org/licenses/>.
 //--------------------------------------------------------
-#include "L2RangeCorrection.h"
+#include "L2calibration.h"
 #include <fstream>
 #include <stdexcept>
 #include "quaternion.h"
@@ -59,7 +64,7 @@
 // Constructor
 //
 //=============================================================================
-L2RangeCorrection::L2RangeCorrection()
+L2calibration::L2calibration()
 {
     ClearCalibration();
 }
@@ -71,39 +76,45 @@ L2RangeCorrection::L2RangeCorrection()
 // Restores the object to its default constructed state.
 //
 //=============================================================================
-void L2RangeCorrection::ClearCalibration()
+void L2calibration::ClearCalibration()
 {
-    mRangeCalibrationInfo = RangeCalibrationInfo();
     mRangeCalibrationPoints.clear();
     mRangeCorrectionLUT.clear();
-    mRangeCalibrationInfo = RangeCalibrationInfo();
+    mCalibrationInfo = CalibrationInfo();
     mAlphaAngleLUTfields.clear();
     mAlphaAngleLUTFieldCount = 0;
 }
 
 //--------------------------------------------------------
-//  LoadRangeCalibration
+//  LoadCalibration
 //--------------------------------------------------------
-bool L2RangeCorrection::LoadRangeCalibration(
+bool L2calibration::LoadCalibration(
     const std::string& filename)
 {
     ResetParserState();
 
     // read range calibration file
-    if(!ReadRangeCalibrationFile(filename))
+    if(!ReadCalibrationFile(filename))
         return false;
 
     // validate Meta data
-    if(!ValidateMeta(mRangeCalibrationInfo))
+    if(!ValidateMeta(mCalibrationInfo))
         return false;
 
-    // validate range calibration data
-    if(!ValidateRangeCalibration(mRangeCorrectionModel))
-        return false;
+    if(mCalibrationInfo.RangeCalMethod!="None") {
+        // validate range calibration data
+        if(!ValidateRangeCalibration(mRangeCorrectionModel))
+            return false;
 
-    // build range correction LUT
-    if(!BuildCubicSplineLUT(mRangeCorrectionModel)) {
-        return false;
+        // build range correction LUT
+        if(!BuildCubicSplineLUT(mRangeCorrectionModel)) {
+            return false;
+        }
+    } else {
+        mRangeCorrectionModel.clear();
+        mRangeCorrectionLUT.clear();
+        mWarnings.emplace_back(
+            "Calibration file does not contain Range model section\n");
     }
 
     if(!ValidateAlphaAngleLUT()) {
@@ -115,7 +126,7 @@ bool L2RangeCorrection::LoadRangeCalibration(
     // if the alpha angles LUT fields is validated
     // the angles needs to be copied to the real LUT
     if(mAlphaLUTvalid) {
-        // copy to just angles to mAlphaAngleLUT
+        // copy to incremental angles to mAlphaAngleLUT
         double next = 0.0;
         for(int i=0; i<NUM_ALPHA_ANGLES_IN_SCAN; i++) {
             mAlphaAngleLUT.emplace_back(next);
@@ -127,9 +138,9 @@ bool L2RangeCorrection::LoadRangeCalibration(
 }
 
 //--------------------------------------------------------
-//  ReadRangeCalibrationFile
+//  ReadCalibrationFile
 //--------------------------------------------------------
-bool L2RangeCorrection::ReadRangeCalibrationFile(
+bool L2calibration::ReadCalibrationFile(
     const std::string& filename)
 {    
     std::ifstream file(filename);
@@ -199,7 +210,7 @@ bool L2RangeCorrection::ReadRangeCalibrationFile(
 //--------------------------------------------------------
 //  ParseMetadataLine
 //--------------------------------------------------------
-bool L2RangeCorrection::ParseMetadataLine(
+bool L2calibration::ParseMetadataLine(
     const std::string& line,
     uint32_t lineNumber)
 {
@@ -215,29 +226,29 @@ bool L2RangeCorrection::ParseMetadataLine(
     }
 
     if (key == META_VERSION) {
-        mRangeCalibrationInfo.Version = value;
+        mCalibrationInfo.Version = value;
     }
     else if (key == META_DATE) {
-        mRangeCalibrationInfo.Date = value;
+        mCalibrationInfo.Date = value;
     }
     else if (key == META_SENSOR) {
-        mRangeCalibrationInfo.Sensor = value;
+        mCalibrationInfo.Sensor = value;
     }
     else if (key == META_SENSOR_ID) {
-        mRangeCalibrationInfo.SensorID = value;
+        mCalibrationInfo.SensorID = value;
     }
     else if (key == META_FIRMWARE) {
-        mRangeCalibrationInfo.Firmware = value;
+        mCalibrationInfo.Firmware = value;
     }
     else if (key == META_CREATEDBY) {
-        mRangeCalibrationInfo.CreatedBy = value;
+        mCalibrationInfo.CreatedBy = value;
     }
     else if (key == META_RANGE_CALIBRATION_METHOD) {
-        mRangeCalibrationInfo.RangeCalMethod = value;
+        mCalibrationInfo.RangeCalMethod = value;
     } else if (key == META_CALIBRATION_DESCRIPTION) {
-        mRangeCalibrationInfo.CalibrationDescription = value;
+        mCalibrationInfo.CalibrationDescription = value;
     } else if (key == META_RANGE_BIAS) {
-        if (!ParseInt32(value, mRangeCalibrationInfo.RangeBias)) {
+        if (!ParseInt32(value, mCalibrationInfo.RangeBias)) {
             mErrors.push_back(
                 "Line " +
                 std::to_string(lineNumber) +
@@ -245,7 +256,7 @@ bool L2RangeCorrection::ParseMetadataLine(
             return false;
         }
     } else if (key == META_RANGE_SCALE) {
-        if (!ParseDouble(value, mRangeCalibrationInfo.RangeScale)) {
+        if (!ParseDouble(value, mCalibrationInfo.RangeScale)) {
             mErrors.push_back(
                 "Line " +
                 std::to_string(lineNumber) +
@@ -253,7 +264,7 @@ bool L2RangeCorrection::ParseMetadataLine(
             return false;
         }
     } else if (key == META_ALPHA_ANGLE_BIAS) {
-        if (!ParseDouble(value, mRangeCalibrationInfo.AlphaAngleBias)) {
+        if (!ParseDouble(value, mCalibrationInfo.AlphaAngleBias)) {
             mErrors.push_back(
                 "Line " +
                 std::to_string(lineNumber) +
@@ -261,7 +272,7 @@ bool L2RangeCorrection::ParseMetadataLine(
             return false;
         }
     } else if (key == META_ALPHA_ANGLE_STEP) {
-        if (!ParseDouble(value, mRangeCalibrationInfo.AlphaAngleStepSize)) {
+        if (!ParseDouble(value, mCalibrationInfo.AlphaAngleStepSize)) {
             mErrors.push_back(
 
                 "Line " +
@@ -270,7 +281,7 @@ bool L2RangeCorrection::ParseMetadataLine(
             return false;
         }
     } else if (key == META_THETA_ANGLE_BIAS) {
-        if (!ParseDouble(value, mRangeCalibrationInfo.ThetaAngleBias)) {
+        if (!ParseDouble(value, mCalibrationInfo.ThetaAngleBias)) {
             mErrors.push_back(
                 "Line " +
                 std::to_string(lineNumber) +
@@ -278,7 +289,7 @@ bool L2RangeCorrection::ParseMetadataLine(
             return false;
         }
     } else if (key == META_BETA_ANGLE) {
-        if (!ParseDouble(value, mRangeCalibrationInfo.BetaAngle)) {
+        if (!ParseDouble(value, mCalibrationInfo.BetaAngle)) {
             mErrors.push_back(
                 "Line " +
                 std::to_string(lineNumber) +
@@ -286,7 +297,7 @@ bool L2RangeCorrection::ParseMetadataLine(
             return false;
         }
     } else if (key == META_XI_ANGLE) {
-        if (!ParseDouble(value, mRangeCalibrationInfo.XiAngle)) {
+        if (!ParseDouble(value, mCalibrationInfo.XiAngle)) {
             mErrors.push_back(
                 "Line " +
                 std::to_string(lineNumber) +
@@ -294,7 +305,7 @@ bool L2RangeCorrection::ParseMetadataLine(
             return false;
         }
     } else if (key == META_MIN_RANGE) {
-        if (!ParseDouble(value, mRangeCalibrationInfo.MinRange)) {
+        if (!ParseDouble(value, mCalibrationInfo.MinRange)) {
             mErrors.push_back(
                 "Line " +
                 std::to_string(lineNumber) +
@@ -302,7 +313,7 @@ bool L2RangeCorrection::ParseMetadataLine(
             return false;
         }
     } else if (key == META_MAX_RANGE) {
-        if (!ParseDouble(value, mRangeCalibrationInfo.MaxRange)) {
+        if (!ParseDouble(value, mCalibrationInfo.MaxRange)) {
             mErrors.push_back(
                 "Line " +
                 std::to_string(lineNumber) +
@@ -319,15 +330,15 @@ bool L2RangeCorrection::ParseMetadataLine(
                 ": Invalid MinTrustedRange value.\n");
             return false;
         }
-        if(!(minTrusted <= 0) && minTrusted < mRangeCalibrationInfo.MinRange) {
+        if(!(minTrusted <= 0) && minTrusted < mCalibrationInfo.MinRange) {
             mErrors.push_back(
                 "Line " +
                 std::to_string(lineNumber) +
                 ": Invalid: MinTrustRange < MinRange\n");
         }
-        mRangeCalibrationInfo.MinTrustedRange = minTrusted;
+        mCalibrationInfo.MinTrustedRange = minTrusted;
     } else if (key == META_CAL_MIN_RANGE) {
-        if (!ParseDouble(value, mRangeCalibrationInfo.MinCalRange)) {
+        if (!ParseDouble(value, mCalibrationInfo.MinCalRange)) {
             mErrors.push_back(
                 "Line " +
                 std::to_string(lineNumber) +
@@ -335,7 +346,7 @@ bool L2RangeCorrection::ParseMetadataLine(
             return false;
         }
     } else if (key == META_CAL_MAX_RANGE) {
-        if (!ParseDouble(value, mRangeCalibrationInfo.MaxCalRange)) {
+        if (!ParseDouble(value, mCalibrationInfo.MaxCalRange)) {
             mErrors.push_back(
                 "Line " +
                 std::to_string(lineNumber) +
@@ -343,7 +354,7 @@ bool L2RangeCorrection::ParseMetadataLine(
             return false;
         }
     } else if (key == META_NUM_OF_RANGE_SEGMENTS) {
-        if (!ParseUInt32(value, mRangeCalibrationInfo.NumberOfSegments)) {
+        if (!ParseUInt32(value, mCalibrationInfo.NumberOfSegments)) {
             mErrors.push_back(
                 "Line " +
                 std::to_string(lineNumber) +
@@ -351,7 +362,7 @@ bool L2RangeCorrection::ParseMetadataLine(
             return false;
         }
     } else if (key == META_RMS_RESIDUAL) {
-        if (!ParseDouble(value, mRangeCalibrationInfo.RMSResidual)) {
+        if (!ParseDouble(value, mCalibrationInfo.RMSResidual)) {
             mErrors.push_back(
                 "Line " +
                 std::to_string(lineNumber) +
@@ -373,16 +384,16 @@ bool L2RangeCorrection::ParseMetadataLine(
 //--------------------------------------------------------
 //  ParseRangeModelLine
 //--------------------------------------------------------
-bool L2RangeCorrection::ParseRangeModelLine(
+bool L2calibration::ParseRangeModelLine(
     const std::string& line,
     uint32_t lineNumber)
 {
-    if (mRangeCalibrationInfo.RangeCalMethod == METHOD_CUBIC_SPLINE) {
+    if (mCalibrationInfo.RangeCalMethod == METHOD_CUBIC_SPLINE) {
         return ParseCubicSplineLine(line, lineNumber);
     } else {
         mErrors.emplace_back(
             "Unsupported range calibration method: " +
-            mRangeCalibrationInfo.RangeCalMethod);
+            mCalibrationInfo.RangeCalMethod);
         return false;
     }
 
@@ -392,7 +403,7 @@ bool L2RangeCorrection::ParseRangeModelLine(
 //--------------------------------------------------------
 //  ParseAlphaAngleLUTline
 //--------------------------------------------------------
-bool L2RangeCorrection::ParseAlphaAngleLUTline(
+bool L2calibration::ParseAlphaAngleLUTline(
     const std::string& line,
     uint32_t lineNumber)
 {
@@ -487,7 +498,7 @@ bool L2RangeCorrection::ParseAlphaAngleLUTline(
 //--------------------------------------------------------
 //  ParseCalibrationPointLine
 //--------------------------------------------------------
-bool L2RangeCorrection::ParseCalibrationPointLine(
+bool L2calibration::ParseCalibrationPointLine(
     const std::string& line,
     uint32_t lineNumber)
 {
@@ -575,7 +586,7 @@ bool L2RangeCorrection::ParseCalibrationPointLine(
 //--------------------------------------------------------
 //  Trim
 //--------------------------------------------------------
-std::string L2RangeCorrection::Trim(const std::string& text)
+std::string L2calibration::Trim(const std::string& text)
 {
     auto first = std::find_if_not(
         text.begin(),
@@ -603,7 +614,7 @@ std::string L2RangeCorrection::Trim(const std::string& text)
 //--------------------------------------------------------
 //  SplitKeyValue
 //--------------------------------------------------------
-bool L2RangeCorrection::SplitKeyValue(
+bool L2calibration::SplitKeyValue(
     const std::string& line,
     std::string& key,
     std::string& value)
@@ -638,7 +649,7 @@ bool L2RangeCorrection::SplitKeyValue(
 //--------------------------------------------------------
 //  IsCommentLine
 //--------------------------------------------------------
-bool L2RangeCorrection::IsCommentLine(const std::string& line)
+bool L2calibration::IsCommentLine(const std::string& line)
 {
     if (line.size() >= 2) {
         if (line.compare(0, 2, "##") == 0)
@@ -659,7 +670,7 @@ bool L2RangeCorrection::IsCommentLine(const std::string& line)
 //--------------------------------------------------------
 //  IsCommentLine
 //--------------------------------------------------------
-void L2RangeCorrection::SplitCSV(
+void L2calibration::SplitCSV(
     const std::string& line,
     std::vector<std::string>& fields)
 {
@@ -686,7 +697,7 @@ void L2RangeCorrection::SplitCSV(
 //--------------------------------------------------------
 //  ParseDouble
 //--------------------------------------------------------
-bool L2RangeCorrection::ParseDouble(
+bool L2calibration::ParseDouble(
     const std::string& text,
     double& value)
 {
@@ -713,7 +724,7 @@ bool L2RangeCorrection::ParseDouble(
 //--------------------------------------------------------
 //  ParseUInt32
 //--------------------------------------------------------
-bool L2RangeCorrection::ParseUInt32(
+bool L2calibration::ParseUInt32(
     const std::string& text,
     uint32_t& value)
 {
@@ -746,7 +757,7 @@ bool L2RangeCorrection::ParseUInt32(
 //--------------------------------------------------------
 //  ParseUInt32
 //--------------------------------------------------------
-bool L2RangeCorrection::ParseInt32(
+bool L2calibration::ParseInt32(
     const std::string& text,
     int32_t& value)
 {
@@ -780,7 +791,7 @@ bool L2RangeCorrection::ParseInt32(
 //--------------------------------------------------------
 //  ResetParserState
 //--------------------------------------------------------
-void L2RangeCorrection::ResetParserState()
+void L2calibration::ResetParserState()
 {
     // Reset parser state.
     mParseState = ParseState::Metadata;
@@ -803,7 +814,7 @@ void L2RangeCorrection::ResetParserState()
     mMaxCalibratedRange = 0.0;
 
     // Reset metadata.
-    mRangeCalibrationInfo = {};
+    mCalibrationInfo = {};
 
     // Clear informational messages.
     mWarnings.clear();
@@ -813,7 +824,7 @@ void L2RangeCorrection::ResetParserState()
 //--------------------------------------------------------
 //  ParseCubicSplineLine
 //--------------------------------------------------------
-bool L2RangeCorrection::ParseCubicSplineLine(
+bool L2calibration::ParseCubicSplineLine(
     const std::string& line,
     uint32_t lineNumber)
 {
@@ -906,7 +917,7 @@ bool L2RangeCorrection::ParseCubicSplineLine(
 //--------------------------------------------------------
 //  ValidateMeta
 //--------------------------------------------------------
-bool L2RangeCorrection::ValidateMeta(const RangeCalibrationInfo& info)
+bool L2calibration::ValidateMeta(const CalibrationInfo& info)
 {
     if(info.MinTrustedRange<0){
         mWarnings.emplace_back(
@@ -926,12 +937,16 @@ bool L2RangeCorrection::ValidateMeta(const RangeCalibrationInfo& info)
             );
         return false;
     }
-    if(info.MinCalRange >= info.MaxCalRange) {
-        mErrors.emplace_back(
-            "MinCalRange >= MacCalRange"
-            );
-        return false;
+
+    if(info.RangeCalMethod!="None") {
+        if(info.MinCalRange >= info.MaxCalRange) {
+            mErrors.emplace_back(
+                "MinCalRange >= MacCalRange"
+                );
+            return false;
+        }
     }
+
     if(info.MinTrustedRange >= info.MaxRange) {
         mErrors.emplace_back(
             "MinTrustedRange >= MaxRange"
@@ -944,13 +959,12 @@ bool L2RangeCorrection::ValidateMeta(const RangeCalibrationInfo& info)
 //--------------------------------------------------------
 //  ValidateRangeCalibration
 //--------------------------------------------------------
-bool L2RangeCorrection::ValidateRangeCalibration(const std::vector<RangeModelFields> RangeCorrectionModel)
-{
-
-    if (mRangeCalibrationInfo.RangeCalMethod != "CubicSpline") {
+bool L2calibration::ValidateRangeCalibration(const std::vector<RangeModelFields> RangeCorrectionModel)
+{    
+    if (mCalibrationInfo.RangeCalMethod != "CubicSpline") {
         mErrors.emplace_back(
                 "Unsupported range calibration method: " +
-                mRangeCalibrationInfo.RangeCalMethod);
+                mCalibrationInfo.RangeCalMethod);
         return false;
     }
 
@@ -963,13 +977,13 @@ bool L2RangeCorrection::ValidateRangeCalibration(const std::vector<RangeModelFie
 //--------------------------------------------------------
 //  BuildRangeCorrectionLUT
 //--------------------------------------------------------
-bool L2RangeCorrection::BuildRangeCorrectionLUT(const std::vector<RangeModelFields> RangeCorrectionModel)
+bool L2calibration::BuildRangeCorrectionLUT(const std::vector<RangeModelFields> RangeCorrectionModel)
 {
 
-    if (mRangeCalibrationInfo.RangeCalMethod != "CubicSpline") {
+    if (mCalibrationInfo.RangeCalMethod != "CubicSpline") {
         mErrors.emplace_back(
             "Unsupported range calibration method: " +
-            mRangeCalibrationInfo.RangeCalMethod);
+            mCalibrationInfo.RangeCalMethod);
         return false;
     }
 
@@ -979,7 +993,7 @@ bool L2RangeCorrection::BuildRangeCorrectionLUT(const std::vector<RangeModelFiel
 //--------------------------------------------------------
 //  ValidateCubicSpline
 //--------------------------------------------------------
-bool L2RangeCorrection::ValidateAlphaAngleLUT()
+bool L2calibration::ValidateAlphaAngleLUT()
 {
     //
     // Verify at least one model segment exists.
@@ -1003,7 +1017,7 @@ bool L2RangeCorrection::ValidateAlphaAngleLUT()
             "Requirement is " +
             std::to_string(NUM_ALPHA_ANGLES_IN_SCAN) +
             " only found: " +
-            std::to_string(mRangeCalibrationInfo.NumberOfSegments));
+            std::to_string(mCalibrationInfo.NumberOfSegments));
         return false;
     }
 
@@ -1011,10 +1025,9 @@ bool L2RangeCorrection::ValidateAlphaAngleLUT()
     // Verify each index.
     //
     int lastindexnum = mAlphaAngleLUTfields[0].fields[FIELD_INDEX];
-    double lastangle = mAlphaAngleLUTfields[0].fields[FIELD_ANGLE];
-    if (lastindexnum != 0 || lastangle!=0.0) {
+    if(lastindexnum!=0) {
         mErrors.emplace_back(
-            "AlphaAngleLUT[0] entry is not 0,0.0");
+            "AlphaAngleLUT[0] index number must be 0");
         return false;
     }
     for (size_t i = 1; i < mAlphaAngleLUTfields.size(); ++i)
@@ -1022,7 +1035,6 @@ bool L2RangeCorrection::ValidateAlphaAngleLUT()
         const auto& entry = mAlphaAngleLUTfields[i];
 
         const int indexnum = entry.fields[FIELD_INDEX];
-        const double angle = entry.fields[FIELD_ANGLE];
 
         if (lastindexnum != (indexnum-1)) {
             mErrors.emplace_back(
@@ -1031,8 +1043,7 @@ bool L2RangeCorrection::ValidateAlphaAngleLUT()
             return false;
         }
 
-       lastindexnum = indexnum;
-        lastangle = angle;
+        lastindexnum = indexnum;
     }
 
     mAlphaLUTvalid = true;
@@ -1043,7 +1054,7 @@ bool L2RangeCorrection::ValidateAlphaAngleLUT()
 //--------------------------------------------------------
 //  ValidateCubicSpline
 //--------------------------------------------------------
-bool L2RangeCorrection::ValidateCubicSpline(
+bool L2calibration::ValidateCubicSpline(
             const std::vector<RangeModelFields> RangeCorrectionModel)
 {
     //
@@ -1058,45 +1069,45 @@ bool L2RangeCorrection::ValidateCubicSpline(
 
     // Verify segment count matches metadata only if not a CandidateModel
     if (RangeCorrectionModel.size() !=
-        mRangeCalibrationInfo.NumberOfSegments) {
+        mCalibrationInfo.NumberOfSegments) {
         mErrors.emplace_back(
             "Range MODEL section contains " +
             std::to_string(mRangeCorrectionModel.size()) +
             " segments.\n" +
             "Metadata specifies NumberOfSegments = " +
-            std::to_string(mRangeCalibrationInfo.NumberOfSegments));
+            std::to_string(mCalibrationInfo.NumberOfSegments));
         return false;
     }
 
     // Verify MinCalRange >= MinRange
-    if(mRangeCalibrationInfo.MinCalRange < mRangeCalibrationInfo.MinRange) {
+    if(mCalibrationInfo.MinCalRange < mCalibrationInfo.MinRange) {
         mErrors.emplace_back(
             "Min Calibration range: " +
-            std::to_string(mRangeCalibrationInfo.MinCalRange) +
+            std::to_string(mCalibrationInfo.MinCalRange) +
             " < device Min Range " +
-            std::to_string(mRangeCalibrationInfo.MinRange)
+            std::to_string(mCalibrationInfo.MinRange)
             );
         return false;
     }
 
     // Verify MaxCalRange <= MaxRange
-    if(mRangeCalibrationInfo.MaxCalRange > mRangeCalibrationInfo.MaxRange) {
+    if(mCalibrationInfo.MaxCalRange > mCalibrationInfo.MaxRange) {
         mErrors.emplace_back(
             "Max Calibration range: " +
-            std::to_string(mRangeCalibrationInfo.MaxCalRange) +
+            std::to_string(mCalibrationInfo.MaxCalRange) +
             " > device Max Range " +
-            std::to_string(mRangeCalibrationInfo.MaxRange)
+            std::to_string(mCalibrationInfo.MaxRange)
             );
         return false;
     }
 
     // Make sure MinCalRange < MaxCalRange
-    if(mRangeCalibrationInfo.MinCalRange >= mRangeCalibrationInfo.MaxCalRange) {
+    if(mCalibrationInfo.MinCalRange >= mCalibrationInfo.MaxCalRange) {
         mErrors.emplace_back(
             "Calibration range is invalid\n Min: " +
-            std::to_string(mRangeCalibrationInfo.MinCalRange) +
+            std::to_string(mCalibrationInfo.MinCalRange) +
             " must be less than max: " +
-            std::to_string(mRangeCalibrationInfo.MaxCalRange));
+            std::to_string(mCalibrationInfo.MaxCalRange));
         return false;
     }
 
@@ -1107,18 +1118,18 @@ bool L2RangeCorrection::ValidateCubicSpline(
     StartCalRange = mRangeCorrectionModel.front().fields[0]; // starting x0
     EndCalRange = mRangeCorrectionModel.back().fields[1]; // ending x1
 
-    if(mRangeCalibrationInfo.MinCalRange < StartCalRange) {
+    if(mCalibrationInfo.MinCalRange < StartCalRange) {
         mErrors.emplace_back(
             "Min Cal range: " +
-            std::to_string(mRangeCalibrationInfo.MinCalRange) +
+            std::to_string(mCalibrationInfo.MinCalRange) +
             " must be >= the start of the first spline segment: " +
             std::to_string(StartCalRange));
         return false;
     }
-    if(mRangeCalibrationInfo.MaxCalRange > EndCalRange){
+    if(mCalibrationInfo.MaxCalRange > EndCalRange){
         mErrors.emplace_back(
             "Max Cal range: " +
-            std::to_string(mRangeCalibrationInfo.MinCalRange) +
+            std::to_string(mCalibrationInfo.MinCalRange) +
             " must be <= the end of the last spline segment: " +
             std::to_string(EndCalRange));
         return false;
@@ -1199,7 +1210,7 @@ bool L2RangeCorrection::ValidateCubicSpline(
 // possible raw range value (0..65535).
 //
 //--------------------------------------------------------
-bool L2RangeCorrection::BuildCubicSplineLUT(const std::vector<RangeModelFields>& rangeCorrectionModel)
+bool L2calibration::BuildCubicSplineLUT(const std::vector<RangeModelFields>& rangeCorrectionModel)
 {
     if (rangeCorrectionModel.empty()) {
         return false;
@@ -1216,8 +1227,8 @@ bool L2RangeCorrection::BuildCubicSplineLUT(const std::vector<RangeModelFields>&
     //----------------------------------------------------
     // Determine the calibrated application range.
     //----------------------------------------------------
-    const double minCalRange = mRangeCalibrationInfo.MinCalRange;
-    const double maxCalRange = mRangeCalibrationInfo.MaxCalRange;
+    const double minCalRange = mCalibrationInfo.MinCalRange;
+    const double maxCalRange = mCalibrationInfo.MaxCalRange;
 
     if (!(minCalRange < maxCalRange)) {
         return false;
@@ -1341,7 +1352,7 @@ bool L2RangeCorrection::BuildCubicSplineLUT(const std::vector<RangeModelFields>&
 //--------------------------------------------------------
 //  GetRangeCorrectionLUT
 //--------------------------------------------------------
-const std::vector<double>& L2RangeCorrection::GetRangeCorrectionLUT() const noexcept
+const std::vector<double>& L2calibration::GetRangeCorrectionLUT() const noexcept
 {
     return mRangeCorrectionLUT;
 }
@@ -1349,7 +1360,7 @@ const std::vector<double>& L2RangeCorrection::GetRangeCorrectionLUT() const noex
 //--------------------------------------------------------
 //  IsAlphaAngleLUTvalid
 //--------------------------------------------------------
-bool L2RangeCorrection::IsAlphaAngleLUTloaded()
+bool L2calibration::IsAlphaAngleLUTloaded()
 {
     return mAlphaLUTvalid;
 }
@@ -1357,7 +1368,7 @@ bool L2RangeCorrection::IsAlphaAngleLUTloaded()
 //--------------------------------------------------------
 //  GetAlphaAngleLUT
 //--------------------------------------------------------
-const std::vector<double>& L2RangeCorrection::GetAlphaAngleLUT() const noexcept
+const std::vector<double>& L2calibration::GetAlphaAngleLUT() const noexcept
 {
     return mAlphaAngleLUT;
 }

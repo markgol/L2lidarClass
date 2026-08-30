@@ -2,7 +2,7 @@
 //
 //  L2Diagnostic
 //  Author: Mark Stegall
-//  Module: L2RangeCorrection.h
+//  Module: L2calibration.h
 //
 // Purpose     Unitree L2 non-linear range correction.
 //
@@ -19,7 +19,7 @@
 //  nonlinear range response.
 //
 //  Solution:
-//  The L2RangeCorrection class implements the range calibration to be used
+//  The L2calibration class implements the calibration to be used
 //  for realtime range correction.  This cuurently is a piecewise cubic spline fit.
 //
 //  V2.0.0RC1 2026-08-20 Adding range calibration class to be used in the L2lidar class
@@ -28,9 +28,11 @@
 //                          It does not include the creation and calibration procedures
 //                            that generates the calibration dataset used in the application of
 //                            range correction methods.
-//  V2.0.1  2026-08-24 Implemented application of the alpha angle LUT
-//                     Added Alpha Angle step size override
-//                     Removed unused code
+//  V2.1.0  2026-08-27  Changed calibration file so that range correction
+//                          optional.  This allows just metadata to be saved
+//                          which includes the overrride biases.
+//                      Changed files/names to reflect generalization
+//                          of the calibration file rather than RangeCorrection file
 //
 //--------------------------------------------------------
 
@@ -67,7 +69,7 @@
 //---------------------------------------------------------------------
 // Range Calibration Metadata structure
 //---------------------------------------------------------------------
-struct RangeCalibrationInfo
+struct CalibrationInfo
 {
     // This structure supports units in either meters or mm
     // but they units can not be mixed
@@ -190,28 +192,28 @@ struct AlphaAngleLUTFields
 };
 
 //---------------------------------------------------------------------
-// class L2RangeCorrection definition
+// class L2calibration definition
 //---------------------------------------------------------------------
-class L2RangeCorrection
+class L2calibration
 {
 public:
 
     // methods
 
-    L2RangeCorrection();
-    ~L2RangeCorrection() = default;
+    L2calibration();
+    ~L2calibration() = default;
 
-    L2RangeCorrection(const L2RangeCorrection&) = delete;
-    L2RangeCorrection& operator=(const L2RangeCorrection&) = delete;
+    L2calibration(const L2calibration&) = delete;
+    L2calibration& operator=(const L2calibration&) = delete;
 
-    L2RangeCorrection(L2RangeCorrection&&) noexcept = default;
-    L2RangeCorrection& operator=(L2RangeCorrection&&) noexcept = default;
+    L2calibration(L2calibration&&) noexcept = default;
+    L2calibration& operator=(L2calibration&&) noexcept = default;
 
     //---------------------------------------------------------------------
     // Range Correction methods
     //---------------------------------------------------------------------
     // standard method of loading range correction calibration
-    bool LoadRangeCalibration(const std::string& filename);
+    bool LoadCalibration(const std::string& filename);
 
     // range correction methods
     const std::vector<double>& GetRangeCorrectionLUT() const noexcept;
@@ -225,9 +227,9 @@ public:
         return mErrors;
     };
 
-    const RangeCalibrationInfo& GetRangeCalibrationInfo() const noexcept
+    const CalibrationInfo& GetCalibrationInfo() const noexcept
     {
-        return mRangeCalibrationInfo;
+        return mCalibrationInfo;
     }
 
     void ClearCalibration();
@@ -261,8 +263,8 @@ private: // structures
 
 private: // functions
 
-    bool ReadRangeCalibrationFile(const std::string& filename);
-    bool ValidateMeta(const RangeCalibrationInfo& info);
+    bool ReadCalibrationFile(const std::string& filename);
+    bool ValidateMeta(const CalibrationInfo& info);
     bool ValidateRangeCalibration(const std::vector<RangeModelFields> RangeCorrectionModel);
     bool ValidateAlphaAngleLUT();
     bool BuildCubicSplineLUT(const std::vector<RangeModelFields>& RangeCorrectionModel);
@@ -339,10 +341,10 @@ private: // functions
         const std::string& text,
         int32_t& value);
 
-private:
+private: // variables
 
     ParseState mParseState = ParseState::Metadata;
-    RangeCalibrationInfo mRangeCalibrationInfo; // this instance uses mm as units
+    CalibrationInfo mCalibrationInfo; // this instance uses mm as units
 
     CalibrationMethod mMethod = CalibrationMethod::Unknown;
 
