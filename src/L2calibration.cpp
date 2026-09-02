@@ -331,12 +331,6 @@ bool L2calibration::ParseMetadataLine(
                 ": Invalid MinTrustedRange value.\n");
             return false;
         }
-        if(!(minTrusted <= 0) && minTrusted < mCalibrationInfo.MinRange) {
-            mErrors.push_back(
-                "Line " +
-                std::to_string(lineNumber) +
-                ": Invalid: MinTrustRange < MinRange\n");
-        }
         mCalibrationInfo.MinTrustedRange = minTrusted;
     } else if (key == META_CAL_MIN_RANGE) {
         if (!ParseDouble(value, mCalibrationInfo.MinCalRange)) {
@@ -943,7 +937,7 @@ bool L2calibration::ValidateMeta(const CalibrationInfo& info)
     if(info.RangeCalMethod!="None") {
         if(info.MinCalRange >= info.MaxCalRange) {
             mErrors.emplace_back(
-                "MinCalRange >= MacCalRange"
+                "MinCalRange >= MaxCalRange"
                 );
             return false;
         }
